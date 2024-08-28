@@ -1,0 +1,21 @@
+[package]
+name = "workout_dapp"
+version = "1.0.0"
+authors = []
+
+[addresses]
+basic_address = "0x0ddd294cf4cc84266a03d5d60cf559114ce6946a096c034d6f65ab9943a2b042"
+std = "0x1"
+aptos_std = "0x1"
+aptos_framework = "0x1"
+aptos_token_objects = "0x4"
+
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-framework"
+
+
+[dev-dependencies]
