@@ -1,11 +1,11 @@
 module basic_address::workout_dapp {
     //use std::table;
     use std::signer;
-    //use std::random;
+    use aptos_framework::randomness;
     use std::vector;
     use std::debug;
     use std::string::{String,utf8};
-    use aptos_framework::randomness;
+    use aptos_framework::event;
 
     struct ExercisesList has key {
         exercises: vector<Exercise>,
@@ -30,12 +30,43 @@ module basic_address::workout_dapp {
         level_limit: u64
     }
 
+    #[event]
+    struct ProfileCreated has drop, store {
+        new_profile_address: address,
+    }
+
+    #[event]
+    struct ProfileExerciseAdded has drop, store {
+        profile_address: address,
+        exercise_name: vector<u8>,
+    }
+
+    #[event]
+    struct ProfileExerciseDone has drop, store {
+        profile_address: address,
+        exercise_name: vector<u8>,
+        workout_count: u64,
+    }
+
+    #[event]
+    struct ExerciseAdded has drop, store {
+        added_exercise_name: vector<u8>,
+    }
+
+    #[event]
+    struct ExerciseRemoved has drop, store {
+        removed_exercise_name: vector<u8>,
+    }
+
     fun init_module(account: &signer) {
         let profile = Profile {
           exercises_completed: vector::empty<ProfileExercise>(),
           total_workouts: 0,
         };
         move_to(account, profile);
+
+        let account_address = signer::address_of(account);
+        event::emit(ProfileCreated { new_profile_address: account_address });
 
         let exercises = vector::empty<Exercise>();
         vector::push_back(&mut exercises, Exercise { name: b"Chest" });
@@ -68,6 +99,11 @@ module basic_address::workout_dapp {
                 if (&exercise.name == &existing_exercise.name) {
                     exercise_exists = true;
                     existing_exercise.total_workouts = existing_exercise.total_workouts + 1;
+                    event::emit(ProfileExerciseDone {
+                      profile_address: account_address,
+                      exercise_name: exercise.name,
+                      workout_count: existing_exercise.total_workouts
+                    });
                     break
                 };
                 i = i + 1;
@@ -77,19 +113,25 @@ module basic_address::workout_dapp {
                     name: exercise.name,
                     total_workouts: 1,
                 };
+                event::emit(ProfileExerciseAdded { profile_address: account_address, exercise_name: exercise.name });
                 vector::push_back(&mut profile.exercises_completed, new_exercise);
             }
 
         } else {
+            let profile = Profile {
+              exercises_completed: vector::empty<ProfileExercise>(),
+              total_workouts: 1,
+            };
+
+            event::emit(ProfileExerciseAdded { profile_address: account_address, exercise_name: exercise.name });
+
             let new_exercise = ProfileExercise {
                 name: exercise.name,
                 total_workouts: 1,
             };
 
-            let profile = Profile {
-              exercises_completed: vector::empty<ProfileExercise>(),
-              total_workouts: 1,
-            };
+            event::emit(ProfileExerciseAdded { profile_address: account_address, exercise_name: exercise.name });
+
             vector::push_back(&mut profile.exercises_completed, new_exercise);
             move_to(account, profile);
         };
@@ -99,6 +141,8 @@ module basic_address::workout_dapp {
         let account_address = signer::address_of(account);
         let repository = borrow_global_mut<ExercisesList>(account_address);
         let exercise = Exercise { name };
+
+        event::emit(ExerciseAdded { added_exercise_name: name });
 
         vector::push_back(&mut repository.exercises, exercise);
     }
@@ -113,6 +157,8 @@ module basic_address::workout_dapp {
             let exercise = vector::borrow(&repository.exercises, i);
             if (&exercise.name == &name) {
                 vector::remove(&mut repository.exercises, i);
+
+                event::emit(ExerciseRemoved { removed_exercise_name: name });
                 break
             };
             i = i + 1;
@@ -303,5 +349,4 @@ module basic_address::workout_dapp {
         let top_exercise = *vector::borrow(&top_exercises, 0);
         assert!(top_exercise.name == b"Legs", 1);
     }
-
 }
