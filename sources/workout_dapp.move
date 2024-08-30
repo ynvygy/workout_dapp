@@ -16,11 +16,11 @@ module basic_address::workout_dapp {
     }
 
     struct Profile has key, copy {
-        exercises_completed: vector<ProfileExercises>,
+        exercises_completed: vector<ProfileExercise>,
         total_workouts: u64,
     }
 
-    struct ProfileExercises has store, copy, drop {
+    struct ProfileExercise has store, copy, drop {
         name: vector<u8>,
         total_workouts: u64,
     }
@@ -32,7 +32,7 @@ module basic_address::workout_dapp {
 
     fun init_module(account: &signer) {
         let profile = Profile {
-          exercises_completed: vector::empty<ProfileExercises>(),
+          exercises_completed: vector::empty<ProfileExercise>(),
           total_workouts: 0,
         };
         move_to(account, profile);
@@ -55,19 +55,40 @@ module basic_address::workout_dapp {
         let repository = borrow_global<ExercisesList>(resource_address);
         let exercise = *vector::borrow(&repository.exercises, index);
 
-        let new_exercise = ProfileExercises {
-            name: exercise.name,
-            total_workouts: 1,
-        };
-
         if (exists<Profile>(account_address)) {
             let profile = borrow_global_mut<Profile>(account_address);
             profile.total_workouts = profile.total_workouts + 1;
-            vector::push_back(&mut profile.exercises_completed, new_exercise);
+
+            let length = vector::length(&profile.exercises_completed);
+            let exercise_exists = false;
+            let i = 0;
+
+            while (i < length) {
+                let existing_exercise = vector::borrow_mut(&mut profile.exercises_completed, i);
+                if (&exercise.name == &existing_exercise.name) {
+                    exercise_exists = true;
+                    existing_exercise.total_workouts = existing_exercise.total_workouts + 1;
+                    break
+                };
+                i = i + 1;
+            };
+            if (exercise_exists == false) {
+                let new_exercise = ProfileExercise {
+                    name: exercise.name,
+                    total_workouts: 1,
+                };
+                vector::push_back(&mut profile.exercises_completed, new_exercise);
+            }
+
         } else {
+            let new_exercise = ProfileExercise {
+                name: exercise.name,
+                total_workouts: 1,
+            };
+
             let profile = Profile {
-              exercises_completed: vector::empty<ProfileExercises>(),
-              total_workouts: 0,
+              exercises_completed: vector::empty<ProfileExercise>(),
+              total_workouts: 1,
             };
             vector::push_back(&mut profile.exercises_completed, new_exercise);
             move_to(account, profile);
@@ -96,8 +117,51 @@ module basic_address::workout_dapp {
             };
             i = i + 1;
         };
+    }
 
+    #[view]
+    public fun get_top_3_exercises(account: address): vector<ProfileExercise> acquires Profile {
+        let profile = borrow_global<Profile>(account);
+        let exercises = &profile.exercises_completed;
 
+        let sorted_exercises: vector<ProfileExercise> = vector::empty<ProfileExercise>();
+        let length = vector::length(exercises);
+        let i = 0;
+        while (i < length) {
+            let exercise = *vector::borrow(exercises, i);
+            sorted_exercises = sorted_exercises;
+            let inserted = false;
+            let j = 0;
+            while (j < vector::length(&sorted_exercises)) {
+                let sorted_exercise = *vector::borrow(&sorted_exercises, j);
+                if (exercise.total_workouts > sorted_exercise.total_workouts) {
+                    vector::insert(&mut sorted_exercises, j, exercise);
+                    break
+                } else {
+                    j = j + 1;
+                }
+            };
+            if (!inserted && j == vector::length(&sorted_exercises)) {
+                vector::push_back(&mut sorted_exercises, exercise);
+            };
+            i = i + 1;
+        };
+
+        let top_3_exercises: vector<ProfileExercise> = vector::empty<ProfileExercise>();
+        let i = 0;
+        while (i < 3 && i < vector::length(&sorted_exercises)) {
+            let exercise = *vector::borrow(&sorted_exercises, i);
+            vector::push_back(&mut top_3_exercises, exercise);
+            i = i + 1;
+        };
+        top_3_exercises
+    }
+
+    #[view]
+    public fun get_profile_exercise(account: address, index: u64): ProfileExercise acquires Profile {
+        let profile = borrow_global<Profile>(account);
+        let exercise = *vector::borrow(&profile.exercises_completed, index);
+        exercise
     }
 
     #[view]
@@ -115,12 +179,12 @@ module basic_address::workout_dapp {
 
     #[view]
     #[lint::allow_unsafe_randomness]
-    public fun get_seven_exercises(account: address, index: u64): vector<Exercise> acquires ExercisesList {
+    public fun get_seven_exercises(account: address): vector<Exercise> acquires ExercisesList {
         let repository = borrow_global<ExercisesList>(account);
         let exercises: vector<Exercise> = vector::empty<Exercise>();
         let i = 0;
         while (i < 7) {
-            let index = get_random_number(7-i);
+            let index = get_random_number(6-i);
             let exercise = *vector::borrow(&repository.exercises, index);
             vector::push_back(&mut exercises, exercise);
             i = i + 1;
@@ -141,9 +205,9 @@ module basic_address::workout_dapp {
         let repository = borrow_global<ExercisesList>(account);
         let len = vector::length(&repository.exercises);
 
-        //let index = get_random_number(len);
+        let index = get_random_number(len);
 
-        let exercise = vector::borrow(&repository.exercises, 3);
+        let exercise = vector::borrow(&repository.exercises, index);
         exercise.name
     }
 
@@ -172,14 +236,6 @@ module basic_address::workout_dapp {
     }
 
     #[test(account = @0x1)]
-    public fun test_random_exercise(account: signer) acquires ExercisesList {
-        init_module(&account);
-        let account_address = signer::address_of(&account);
-
-        let exercise = get_random_exercise(account_address);
-    }
-
-    #[test(account = @0x1)]
     public fun test_adding_an_exercise(account: signer) acquires ExercisesList {
         init_module(&account);
         let name = b"Test Exercise";
@@ -190,7 +246,7 @@ module basic_address::workout_dapp {
         assert!(exercises == 8, 1);
 
         let exercise = get_exercise(account_address, 7);
-        assert(exercise.name == name, 1);
+        assert!(exercise.name == name, 1);
     }
 
     #[test(account = @0x1)]
@@ -223,9 +279,29 @@ module basic_address::workout_dapp {
         assert!(vector::length(&exercises) == 1, 1);
 
         let owner_address = signer::address_of(&account);
-        start_exercise(&account_two, owner_address, 2);
+        start_exercise(&account_two, owner_address, 1);
         let profile = borrow_global<Profile>(account_address);
         let new_exercises = profile.exercises_completed;
-        assert!(vector::length(&new_exercises) == 2, 1);
+        assert!(vector::length(&new_exercises) == 1, 1);
+
+        let exercise = get_profile_exercise(account_address, 0);
+        assert!(exercise.name == b"Back", 1);
     }
+
+    #[test(account = @0x1)]
+    public fun test_get_top_3_exercises(account: signer) acquires Profile, ExercisesList {
+        init_module(&account);
+        let owner_address = signer::address_of(&account);
+        start_exercise(&account, owner_address, 1);
+        start_exercise(&account, owner_address, 2);
+        start_exercise(&account, owner_address, 3);
+        start_exercise(&account, owner_address, 3);
+
+        let top_exercises = get_top_3_exercises(owner_address);
+        assert!(vector::length(&top_exercises) == 3, 1);
+
+        let top_exercise = *vector::borrow(&top_exercises, 0);
+        assert!(top_exercise.name == b"Legs", 1);
+    }
+
 }
