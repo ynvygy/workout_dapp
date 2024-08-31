@@ -6,6 +6,19 @@ module basic_address::workout_dapp {
     use std::debug;
     use std::string::{String,utf8};
     use aptos_framework::event;
+    use std::option;
+    use aptos_token_objects::collection::{Self, Collection};
+    use aptos_framework::object;
+    use aptos_token_objects::token::{Self, Token};
+
+    const DOES_NOT_EXIST: u64 = 1;
+    const INCORRECT_ITEM: u64 = 2;
+    const INCORRECT_COUNT: u64 = 3;
+    const INCORRECT_LENGTH: u64 = 4;
+
+    const WORKOUT_COLLECTION_NAME: vector<u8> = b"Workouts";
+    const WORKOUT_COLLECTION_DESCRIPTION: vector<u8> = b"Workout NFTs";
+    const WORKOUT_COLLECTION_URI: vector<u8> = b"no.website.com";
 
     struct ExercisesList has key {
         exercises: vector<Exercise>,
@@ -79,6 +92,18 @@ module basic_address::workout_dapp {
 
         let list = ExercisesList { exercises };
         move_to(account, list);
+
+        let description = utf8(WORKOUT_COLLECTION_DESCRIPTION);
+        let name = utf8(WORKOUT_COLLECTION_NAME);
+        let uri = utf8(WORKOUT_COLLECTION_URI);
+
+        collection::create_unlimited_collection(
+            account,
+            description,
+            name,
+            option::none(),
+            uri,
+        );
     }
 
     public entry fun start_exercise(account: &signer, resource_address: address, index: u64) acquires ExercisesList, Profile {
@@ -163,6 +188,25 @@ module basic_address::workout_dapp {
             };
             i = i + 1;
         };
+    }
+
+    public entry fun mint_nft(account: &signer, index: u64) acquires Profile {
+        let account_address = signer::address_of(account);
+        let profile = borrow_global<Profile>(account_address);
+        let exercise = *vector::borrow(&profile.exercises_completed, index);
+
+        let description = utf8(b"At least 5 exercises completed");
+        let uri = utf8(WORKOUT_COLLECTION_URI);
+        let col_name = utf8(WORKOUT_COLLECTION_NAME);
+
+        token::create_named_token(
+            account,
+            col_name,
+            description,
+            utf8(exercise.name),
+            option::none(),
+            uri,
+        );
     }
 
     #[view]
@@ -265,8 +309,15 @@ module basic_address::workout_dapp {
     public fun test_init(account: signer) {
         init_module(&account);
         let account_address = signer::address_of(&account);
-        assert!(exists<Profile>(account_address), 1);
-        assert!(exists<ExercisesList>(account_address), 1);
+        assert!(exists<Profile>(account_address), DOES_NOT_EXIST);
+        assert!(exists<ExercisesList>(account_address), DOES_NOT_EXIST);
+    }
+
+    #[test(account = @0x1), expected_failure]
+    public fun test_without_init_failure(account: signer) {
+        let account_address = signer::address_of(&account);
+        assert!(exists<Profile>(account_address), DOES_NOT_EXIST);
+        assert!(exists<ExercisesList>(account_address), DOES_NOT_EXIST);
     }
 
     #[test(account = @0x1)]
@@ -274,11 +325,11 @@ module basic_address::workout_dapp {
         init_module(&account);
         let account_address = signer::address_of(&account);
         let exercises = get_exercises_list_count(account_address);
-        assert!(exercises == 7, 1);
+        assert!(exercises == 7, INCORRECT_COUNT);
 
         let name = get_exercise_name_by_index(account_address, 2);
         let shoulders = b"Shoulders";
-        assert!(name == shoulders, 2);
+        assert!(name == shoulders, INCORRECT_ITEM);
     }
 
     #[test(account = @0x1)]
@@ -289,10 +340,10 @@ module basic_address::workout_dapp {
 
         let account_address = signer::address_of(&account);
         let exercises = get_exercises_list_count(account_address);
-        assert!(exercises == 8, 1);
+        assert!(exercises == 8, INCORRECT_COUNT);
 
         let exercise = get_exercise(account_address, 7);
-        assert!(exercise.name == name, 1);
+        assert!(exercise.name == name, INCORRECT_ITEM);
     }
 
     #[test(account = @0x1)]
@@ -303,14 +354,14 @@ module basic_address::workout_dapp {
 
         let account_address = signer::address_of(&account);
         let exercises = get_exercises_list_count(account_address);
-        assert!(exercises == 6, 1);
+        assert!(exercises == 6, INCORRECT_COUNT);
 
         remove_exercise(&account, name);
         let exercises = get_exercises_list_count(account_address);
-        assert!(exercises == 6, 1);
+        assert!(exercises == 6, INCORRECT_COUNT);
 
         let exercise = get_exercise(account_address, 3);
-        assert!(exercise.name == b"Arms", 1);
+        assert!(exercise.name == b"Arms", INCORRECT_ITEM);
     }
 
     #[test(account = @0x1, account_two = @0x2)]
@@ -322,16 +373,16 @@ module basic_address::workout_dapp {
 
         let profile = borrow_global<Profile>(account_address);
         let exercises = profile.exercises_completed;
-        assert!(vector::length(&exercises) == 1, 1);
+        assert!(vector::length(&exercises) == 1, INCORRECT_LENGTH);
 
         let owner_address = signer::address_of(&account);
         start_exercise(&account_two, owner_address, 1);
         let profile = borrow_global<Profile>(account_address);
         let new_exercises = profile.exercises_completed;
-        assert!(vector::length(&new_exercises) == 1, 1);
+        assert!(vector::length(&new_exercises) == 1, INCORRECT_LENGTH);
 
         let exercise = get_profile_exercise(account_address, 0);
-        assert!(exercise.name == b"Back", 1);
+        assert!(exercise.name == b"Back", INCORRECT_ITEM);
     }
 
     #[test(account = @0x1)]
@@ -344,9 +395,28 @@ module basic_address::workout_dapp {
         start_exercise(&account, owner_address, 3);
 
         let top_exercises = get_top_3_exercises(owner_address);
-        assert!(vector::length(&top_exercises) == 3, 1);
+        assert!(vector::length(&top_exercises) == 3, INCORRECT_LENGTH);
 
         let top_exercise = *vector::borrow(&top_exercises, 0);
-        assert!(top_exercise.name == b"Legs", 1);
+        assert!(top_exercise.name == b"Legs", INCORRECT_ITEM);
+    }
+
+    #[test(account = @0x1)]
+    public fun test_mint_nft(account: signer) acquires Profile, ExercisesList {
+      init_module(&account);
+      let owner_address = signer::address_of(&account);
+      start_exercise(&account, owner_address, 0);
+      start_exercise(&account, owner_address, 1);
+      mint_nft(&account, 0);
+
+      let token_name = utf8(b"Chest");
+      let collection_name = utf8(WORKOUT_COLLECTION_NAME);
+
+      let exercise_seed = token::create_token_seed(&collection_name, &token_name);
+
+      let token_address = object::create_object_address(&owner_address, exercise_seed);
+      let token = object::address_to_object<Token>(token_address);
+
+      assert!(object::is_owner(token, owner_address), INCORRECT_ITEM);
     }
 }
