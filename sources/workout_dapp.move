@@ -3,11 +3,11 @@ module basic_address::workout_dapp {
     use std::signer;
     use aptos_framework::randomness;
     use std::vector;
-    use std::debug;
-    use std::string::{String,utf8};
+    //use std::debug;
+    use std::string::{utf8};
     use aptos_framework::event;
     use std::option;
-    use aptos_token_objects::collection::{Self, Collection};
+    use aptos_token_objects::collection::{Self};
     use aptos_framework::object;
     use aptos_token_objects::token::{Self, Token};
 
@@ -69,6 +69,11 @@ module basic_address::workout_dapp {
     #[event]
     struct ExerciseRemoved has drop, store {
         removed_exercise_name: vector<u8>,
+    }
+
+    #[event]
+    struct ProfileReset has drop, store {
+        profile_address: address,
     }
 
     fun init_module(account: &signer) {
@@ -195,6 +200,8 @@ module basic_address::workout_dapp {
         let profile = borrow_global<Profile>(account_address);
         let exercise = *vector::borrow(&profile.exercises_completed, index);
 
+        assert!(exercise.total_workouts > 4, INCORRECT_COUNT);
+
         let description = utf8(b"At least 5 exercises completed");
         let uri = utf8(WORKOUT_COLLECTION_URI);
         let col_name = utf8(WORKOUT_COLLECTION_NAME);
@@ -207,6 +214,16 @@ module basic_address::workout_dapp {
             option::none(),
             uri,
         );
+    }
+
+    public entry fun reset_my_stats(account: &signer) acquires Profile {
+        let account_address = signer::address_of(account);
+        let profile = borrow_global_mut<Profile>(account_address);
+
+        profile.exercises_completed = vector::empty<ProfileExercise>();
+        profile.total_workouts = 0;
+
+        event::emit(ProfileReset { profile_address: account_address });
     }
 
     #[view]
@@ -407,6 +424,10 @@ module basic_address::workout_dapp {
       let owner_address = signer::address_of(&account);
       start_exercise(&account, owner_address, 0);
       start_exercise(&account, owner_address, 1);
+      start_exercise(&account, owner_address, 0);
+      start_exercise(&account, owner_address, 0);
+      start_exercise(&account, owner_address, 0);
+      start_exercise(&account, owner_address, 0);
       mint_nft(&account, 0);
 
       let token_name = utf8(b"Chest");
@@ -418,5 +439,32 @@ module basic_address::workout_dapp {
       let token = object::address_to_object<Token>(token_address);
 
       assert!(object::is_owner(token, owner_address), INCORRECT_ITEM);
+    }
+
+    #[test(account = @0x1), expected_failure]
+    public fun test_mint_nft_failure(account: signer) acquires Profile, ExercisesList {
+      init_module(&account);
+      let owner_address = signer::address_of(&account);
+
+      start_exercise(&account, owner_address, 1);
+      mint_nft(&account, 0);
+    }
+
+    #[test(account = @0x1)]
+    public fun test_reset_my_tests(account: signer) acquires Profile, ExercisesList {
+        init_module(&account);
+        let account_address = signer::address_of(&account);
+        start_exercise(&account, account_address, 0);
+
+        let profile = borrow_global<Profile>(account_address);
+        let exercises = profile.exercises_completed;
+        assert!(vector::length(&exercises) == 1, INCORRECT_LENGTH);
+        assert!(profile.total_workouts == 1, INCORRECT_COUNT);
+
+        reset_my_stats(&account);
+        let profile = borrow_global<Profile>(account_address);
+        let exercises = profile.exercises_completed;
+        assert!(vector::length(&exercises) == 0, INCORRECT_LENGTH);
+        assert!(profile.total_workouts == 0, INCORRECT_COUNT);
     }
 }
