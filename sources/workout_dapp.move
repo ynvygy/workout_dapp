@@ -1,7 +1,7 @@
 module basic_address::workout_dapp {
     //use std::table;
     use std::signer;
-    use aptos_framework::randomness;
+    //use aptos_framework::randomness;
     use std::vector;
     //use std::debug;
     use std::string::{utf8};
@@ -15,10 +15,13 @@ module basic_address::workout_dapp {
     const INCORRECT_ITEM: u64 = 2;
     const INCORRECT_COUNT: u64 = 3;
     const INCORRECT_LENGTH: u64 = 4;
+    const VECTOR_OPERATION_ERROR: u64 = 1001; // Custom error code for vector operation
 
     const WORKOUT_COLLECTION_NAME: vector<u8> = b"Workouts";
     const WORKOUT_COLLECTION_DESCRIPTION: vector<u8> = b"Workout NFTs";
     const WORKOUT_COLLECTION_URI: vector<u8> = b"no.website.com";
+
+    const DEPLOYER: address = @0x3f8bac3240eeaa36474bc057392ead9b5ef97e095d562a526b75d87dfd102063;
 
     struct ExercisesList has key {
         exercises: vector<Exercise>,
@@ -31,6 +34,7 @@ module basic_address::workout_dapp {
     struct Profile has key, copy {
         exercises_completed: vector<ProfileExercise>,
         total_workouts: u64,
+        last_random_exercise: u64,
     }
 
     struct ProfileExercise has store, copy, drop {
@@ -80,11 +84,11 @@ module basic_address::workout_dapp {
         let profile = Profile {
           exercises_completed: vector::empty<ProfileExercise>(),
           total_workouts: 0,
+          last_random_exercise: 999
         };
         move_to(account, profile);
 
         let account_address = signer::address_of(account);
-        event::emit(ProfileCreated { new_profile_address: account_address });
 
         let exercises = vector::empty<Exercise>();
         vector::push_back(&mut exercises, Exercise { name: b"Chest" });
@@ -109,6 +113,8 @@ module basic_address::workout_dapp {
             option::none(),
             uri,
         );
+
+        event::emit(ProfileCreated { new_profile_address: account_address });
     }
 
     public entry fun start_exercise(account: &signer, resource_address: address, index: u64) acquires ExercisesList, Profile {
@@ -151,6 +157,7 @@ module basic_address::workout_dapp {
             let profile = Profile {
               exercises_completed: vector::empty<ProfileExercise>(),
               total_workouts: 1,
+              last_random_exercise: 999
             };
 
             event::emit(ProfileExerciseAdded { profile_address: account_address, exercise_name: exercise.name });
@@ -266,10 +273,19 @@ module basic_address::workout_dapp {
 
     #[view]
     public fun get_profile_exercise(account: address, index: u64): ProfileExercise acquires Profile {
-        let profile = borrow_global<Profile>(account);
-        let exercise = *vector::borrow(&profile.exercises_completed, index);
-        exercise
-    }
+      let profile = borrow_global<Profile>(account);
+
+      // Get the length of the vector
+      let length = vector::length(&profile.exercises_completed);
+
+      // Check if the index is within bounds
+      assert!(index < length, VECTOR_OPERATION_ERROR);
+
+      // Now it is safe to access the vector
+      let exercise = *vector::borrow(&profile.exercises_completed, index);
+      exercise
+  }
+
 
     #[view]
     public fun get_exercises_list_count(account: address): u64 acquires ExercisesList {
@@ -284,19 +300,39 @@ module basic_address::workout_dapp {
         exercise.name
     }
 
-    #[view]
-    #[lint::allow_unsafe_randomness]
-    public fun get_seven_exercises(account: address): vector<Exercise> acquires ExercisesList {
-        let repository = borrow_global<ExercisesList>(account);
-        let exercises: vector<Exercise> = vector::empty<Exercise>();
-        let i = 0;
-        while (i < 7) {
-            let index = get_random_number(6-i);
-            let exercise = *vector::borrow(&repository.exercises, index);
-            vector::push_back(&mut exercises, exercise);
-            i = i + 1;
-        };
-        exercises
+    #[randomness]
+    entry fun get_seven_exercises(account: &signer) acquires ExercisesList {
+      let account_address = signer::address_of(account);
+
+      // Access the exercises list
+      let repository = borrow_global<ExercisesList>(account_address);
+
+      // Ensure the list has at least 7 exercises
+      let len = vector::length(&repository.exercises);
+      assert!(len >= 7, INCORRECT_LENGTH);
+
+      // Create a local vector to store the exercise names
+      let selected_exercises: vector<vector<u8>> = vector::empty<vector<u8>>();
+
+      let i = 0;
+      while (i < 7) {
+          // Generate a random index for the current iteration
+          let index = get_random_number(len - i);
+
+          // Retrieve the random exercise's name and store it in the local vector
+          let exercise = *vector::borrow(&repository.exercises, index);
+          vector::push_back(&mut selected_exercises, exercise.name);
+
+          i = i + 1;
+      };
+
+      // This is broken as it is, start_exercise is required not add_exercise
+      let j = 0;
+      while (j < 7) {
+          let exercise_name = *vector::borrow(&selected_exercises, j);
+          add_exercise(account, exercise_name);
+          j = j + 1;
+      }
     }
 
     #[view]
@@ -306,20 +342,27 @@ module basic_address::workout_dapp {
         exercise
     }
 
-    #[view]
-    #[lint::allow_unsafe_randomness]
-    public fun get_random_exercise(account: address): vector<u8> acquires ExercisesList {
-        let repository = borrow_global<ExercisesList>(account);
+    #[randomness]
+    entry fun get_random_exercise(account: &signer) acquires ExercisesList, Profile {
+        let repository = borrow_global<ExercisesList>(DEPLOYER);
         let len = vector::length(&repository.exercises);
 
         let index = get_random_number(len);
 
-        let exercise = vector::borrow(&repository.exercises, index);
-        exercise.name
+        start_exercise(account, DEPLOYER, index);
+        let account_address = signer::address_of(account);
+        let profile = borrow_global_mut<Profile>(account_address);
+        profile.last_random_exercise = index;
+    }
+
+    #[view]
+    public fun get_last_random_number(account: address): u64 acquires Profile {
+        let profile = borrow_global<Profile>(account);
+        profile.last_random_exercise
     }
 
     fun get_random_number(length: u64): u64 {
-        randomness::u64_range(0, length)
+        aptos_framework::randomness::u64_range(0, length)
     }
 
     #[test(account = @0x1)]
@@ -466,5 +509,14 @@ module basic_address::workout_dapp {
         let exercises = profile.exercises_completed;
         assert!(vector::length(&exercises) == 0, INCORRECT_LENGTH);
         assert!(profile.total_workouts == 0, INCORRECT_COUNT);
+    }
+
+    #[test(account = @0x1)]
+    public fun test_getting_a_random_number(account: signer) acquires Profile, ExercisesList {
+        init_module(&account);
+        let account_address = signer::address_of(&account);
+        start_exercise(&account, account_address, 0);
+        let random_number = get_last_random_number(account_address);
+        assert!(random_number == 999, INCORRECT_ITEM);
     }
 }
