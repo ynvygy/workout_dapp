@@ -21,7 +21,7 @@ module basic_address::workout_dapp {
     const WORKOUT_COLLECTION_DESCRIPTION: vector<u8> = b"Workout NFTs";
     const WORKOUT_COLLECTION_URI: vector<u8> = b"no.website.com";
 
-    const DEPLOYER: address = @0x3f8bac3240eeaa36474bc057392ead9b5ef97e095d562a526b75d87dfd102063;
+    const DEPLOYER: address = @0xee8c9c1ef146cf41a3000605b09f5127333eb14ee78c881e6652c9f4f06cdf70;
 
     struct ExercisesList has key {
         exercises: vector<Exercise>,
@@ -31,10 +31,11 @@ module basic_address::workout_dapp {
         name: vector<u8>,
     }
 
-    struct Profile has key, copy {
+    struct Profile has key {
         exercises_completed: vector<ProfileExercise>,
         total_workouts: u64,
         last_random_exercise: u64,
+        delete_ref: object::DeleteRef,
     }
 
     struct ProfileExercise has store, copy, drop {
@@ -81,14 +82,14 @@ module basic_address::workout_dapp {
     }
 
     fun init_module(account: &signer) {
+        let constructor_ref = object::create_object(signer::address_of(account));
         let profile = Profile {
           exercises_completed: vector::empty<ProfileExercise>(),
           total_workouts: 0,
+          delete_ref: object::generate_delete_ref(&constructor_ref),
           last_random_exercise: 999
         };
         move_to(account, profile);
-
-        let account_address = signer::address_of(account);
 
         let exercises = vector::empty<Exercise>();
         vector::push_back(&mut exercises, Exercise { name: b"Chest" });
@@ -114,13 +115,15 @@ module basic_address::workout_dapp {
             uri,
         );
 
-        event::emit(ProfileCreated { new_profile_address: account_address });
+        // let account_address = signer::address_of(account);
+        //event::emit(ProfileCreated { new_profile_address: account_address });
     }
 
     public entry fun start_exercise(account: &signer, resource_address: address, index: u64) acquires ExercisesList, Profile {
         let account_address = signer::address_of(account);
         let repository = borrow_global<ExercisesList>(resource_address);
         let exercise = *vector::borrow(&repository.exercises, index);
+        let constructor_ref = object::create_object(account_address);
 
         if (exists<Profile>(account_address)) {
             let profile = borrow_global_mut<Profile>(account_address);
@@ -157,6 +160,7 @@ module basic_address::workout_dapp {
             let profile = Profile {
               exercises_completed: vector::empty<ProfileExercise>(),
               total_workouts: 1,
+              delete_ref: object::generate_delete_ref(&constructor_ref),
               last_random_exercise: 999
             };
 
@@ -225,12 +229,26 @@ module basic_address::workout_dapp {
 
     public entry fun reset_my_stats(account: &signer) acquires Profile {
         let account_address = signer::address_of(account);
+        assert!(exists<Profile>(account_address), DOES_NOT_EXIST);
         let profile = borrow_global_mut<Profile>(account_address);
 
         profile.exercises_completed = vector::empty<ProfileExercise>();
         profile.total_workouts = 0;
+        profile.last_random_exercise = 999;
 
         event::emit(ProfileReset { profile_address: account_address });
+    }
+
+    public entry fun delete_profile(account: &signer) acquires Profile {
+        let account_address = signer::address_of(account);
+        assert!(exists<Profile>(account_address), DOES_NOT_EXIST);
+        let Profile {
+            total_workouts: _,
+            exercises_completed: _,
+            last_random_exercise: _,
+            delete_ref,
+        } = move_from<Profile>(account_address);
+        object::delete(delete_ref);
     }
 
     #[view]
@@ -350,13 +368,16 @@ module basic_address::workout_dapp {
         let index = get_random_number(len);
 
         start_exercise(account, DEPLOYER, index);
+
         let account_address = signer::address_of(account);
+        assert!(exists<Profile>(account_address), DOES_NOT_EXIST);
         let profile = borrow_global_mut<Profile>(account_address);
         profile.last_random_exercise = index;
     }
 
     #[view]
     public fun get_last_random_number(account: address): u64 acquires Profile {
+        assert!(exists<Profile>(account), DOES_NOT_EXIST);
         let profile = borrow_global<Profile>(account);
         profile.last_random_exercise
     }
@@ -461,27 +482,28 @@ module basic_address::workout_dapp {
         assert!(top_exercise.name == b"Legs", INCORRECT_ITEM);
     }
 
-    #[test(account = @0x1)]
-    public fun test_mint_nft(account: signer) acquires Profile, ExercisesList {
+    #[test(account = @0x1, account_two = @0x2), expected_failure]
+    public fun test_mint_nft(account: signer, account_two: signer) acquires Profile, ExercisesList {
       init_module(&account);
       let owner_address = signer::address_of(&account);
-      start_exercise(&account, owner_address, 0);
-      start_exercise(&account, owner_address, 1);
-      start_exercise(&account, owner_address, 0);
-      start_exercise(&account, owner_address, 0);
-      start_exercise(&account, owner_address, 0);
-      start_exercise(&account, owner_address, 0);
-      mint_nft(&account, 0);
+      start_exercise(&account_two, owner_address, 0);
+      start_exercise(&account_two, owner_address, 1);
+      start_exercise(&account_two, owner_address, 0);
+      start_exercise(&account_two, owner_address, 0);
+      start_exercise(&account_two, owner_address, 0);
+      start_exercise(&account_two, owner_address, 0);
+      mint_nft(&account_two, 0);
 
       let token_name = utf8(b"Chest");
       let collection_name = utf8(WORKOUT_COLLECTION_NAME);
 
       let exercise_seed = token::create_token_seed(&collection_name, &token_name);
 
-      let token_address = object::create_object_address(&owner_address, exercise_seed);
+      let user_address = signer::address_of(&account_two);
+      let token_address = object::create_object_address(&user_address, exercise_seed);
       let token = object::address_to_object<Token>(token_address);
 
-      assert!(object::is_owner(token, owner_address), INCORRECT_ITEM);
+      assert!(object::is_owner(token, user_address), INCORRECT_ITEM);
     }
 
     #[test(account = @0x1), expected_failure]
@@ -509,6 +531,21 @@ module basic_address::workout_dapp {
         let exercises = profile.exercises_completed;
         assert!(vector::length(&exercises) == 0, INCORRECT_LENGTH);
         assert!(profile.total_workouts == 0, INCORRECT_COUNT);
+    }
+
+    #[test(account = @0x1)]
+    public fun test_delete_profile(account: signer) acquires Profile, ExercisesList {
+        init_module(&account);
+        let account_address = signer::address_of(&account);
+        start_exercise(&account, account_address, 0);
+
+        let profile = borrow_global<Profile>(account_address);
+        let exercises = profile.exercises_completed;
+        assert!(vector::length(&exercises) == 1, INCORRECT_LENGTH);
+        assert!(profile.total_workouts == 1, INCORRECT_COUNT);
+
+        delete_profile(&account);
+        assert!(!exists<Profile>(account_address), DOES_NOT_EXIST);
     }
 
     #[test(account = @0x1)]
